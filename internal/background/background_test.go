@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -39,6 +40,25 @@ func (f *fakeSaver) Save(ctx context.Context, _ []*cache.Entry) error {
 		f.cancelled.Add(1)
 	}
 	return f.err
+}
+
+// lockedBuffer is a log destination the test can read while the job's goroutine writes to it. synctest.Wait doesn't
+// make a plain bytes.Buffer safe here, because the race detector still sees the two accesses as unsynchronized.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 // advance moves simulated time forward, then waits until every goroutine in the bubble has finished reacting.
@@ -169,7 +189,7 @@ func TestPersistence_Run(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			var logs bytes.Buffer
+			var logs lockedBuffer
 			saver := &fakeSaver{err: errors.New("disk full")}
 			job := Persistence{Store: fakeSnapshotter{}, Saver: saver, Interval: 10 * time.Second, Logger: slog.New(slog.NewTextHandler(&logs, nil))}
 			go job.Run(ctx)
