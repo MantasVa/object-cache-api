@@ -157,10 +157,11 @@ func isJSONContentType(header string) bool {
 		(strings.HasPrefix(mediaType, "application/") && strings.HasSuffix(mediaType, "+json"))
 }
 
-// ignoreTrailingSlash makes /api/cache/ equivalent to /api/cache, which net/http's ServeMux does not do by itself.
+// ignoreTrailingSlash makes /api/v1/cache/ equivalent to /api/v1/cache, which net/http's ServeMux does not do by
+// itself. It checks the escaped path because an encoded slash (%2F) is part of a key, not a trailing slash.
 func ignoreTrailingSlash(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if path := r.URL.Path; len(path) > 1 && strings.HasSuffix(path, "/") {
+		if path := r.URL.Path; len(path) > 1 && strings.HasSuffix(r.URL.EscapedPath(), "/") {
 			// A clone, because a handler must not modify the request it was given.
 			r = r.Clone(r.Context())
 			r.URL.Path = strings.TrimSuffix(path, "/")

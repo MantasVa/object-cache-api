@@ -41,7 +41,7 @@
                         "headers": {
                             "Location": {
                                 "type": "string",
-                                "description": "URL of the created entry"
+                                "description": "Relative URL of the created entry"
                             }
                         }
                     },

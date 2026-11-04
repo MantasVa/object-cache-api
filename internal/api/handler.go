@@ -134,7 +134,7 @@ func (h *handlers) get(w http.ResponseWriter, r *http.Request) {
 // @Produce application/problem+json
 // @Param request body contract.CreateRequest true "Key, values and optional TTL"
 // @Success 201 {object} contract.EntryResponse "Entry created"
-// @Header 201 {string} Location "URL of the created entry"
+// @Header 201 {string} Location "Relative URL of the created entry"
 // @Failure 400 {object} problem "Validation failed, or the TTL exceeds the configured maximum"
 // @Failure 409 {object} problem "An entry already exists for this key"
 // @Failure 413 {object} problem "Request body too large"
@@ -157,7 +157,7 @@ func (h *handlers) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Location", locationOf(r, req.Key))
+	w.Header().Set("Location", locationOf(req.Key))
 	writeJSON(w, http.StatusCreated, toResponse(entry))
 }
 
@@ -276,13 +276,11 @@ func ttlText(seconds *int32) string {
 	return strconv.Itoa(int(*seconds))
 }
 
-// locationOf builds the absolute URL of the created resource.
-func locationOf(r *http.Request, key string) string {
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	return scheme + "://" + r.Host + cachePath + "/" + url.PathEscape(key)
+// locationOf builds the created resource's URL as a relative path. Behind a TLS proxy this service only sees plain
+// HTTP and a host it can't trust, so it can't build a correct absolute URL. HTTP clients resolve this against the
+// URL they requested.
+func locationOf(key string) string {
+	return cachePath + "/" + url.PathEscape(key)
 }
 
 // parseBoolQuery accepts only "true" and "false" in any case. strconv.ParseBool is too lenient here, because

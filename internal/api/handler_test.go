@@ -150,7 +150,7 @@ func TestCreate_Succeeds(t *testing.T) {
 	r := c.create("k1", nil, "a", "b", "c")
 
 	wantStatus(t, r, http.StatusCreated)
-	if got := r.header.Get("Location"); got != c.base+"/api/v1/cache/k1" {
+	if got := r.header.Get("Location"); got != "/api/v1/cache/k1" {
 		t.Fatalf("Location = %q", got)
 	}
 	entry := readEntry(t, r)
@@ -170,7 +170,7 @@ func TestCreate_LocationCanBeFollowedForAKeyWithReservedCharacters(t *testing.T)
 	wantStatus(t, created, http.StatusCreated)
 
 	location := created.header.Get("Location")
-	resp, err := http.Get(location)
+	resp, err := http.Get(c.base + location)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -804,4 +804,80 @@ func TestOpenAPI_LimitsMatchTheContractConstants(t *testing.T) {
 			t.Errorf("%s: values count limits are wrong: %+v", name, values)
 		}
 	}
+}
+
+func TestLocation_IsRelativeWhateverHostTheRequestUsed(t *testing.T) {
+	// Behind a TLS proxy this service only sees plain HTTP and an internal or client-supplied host, so an absolute URL
+	// built from the request would be wrong.
+	handler := NewHandler(cache.NewStore(time.Minute, time.Hour), slog.New(slog.DiscardHandler))
+	req := httptest.NewRequest(http.MethodPost, "http://internal:8080/api/v1/cache", strings.NewReader(`{"key":"k","values":["a"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Host = "evil.example"
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("Location"); got != "/api/v1/cache/k" {
+		t.Fatalf("Location = %q, want a relative path", got)
+	}
+}
+
+func TestKeysEndingInSlash(t *testing.T) {
+	valueOf := func(t *testing.T, r result) string {
+		t.Helper()
+		wantStatus(t, r, http.StatusOK)
+		return string(readEntry(t, r).Values[0])
+	}
+
+	t.Run("an encoded trailing slash is part of the key", func(t *testing.T) {
+		c := newClient(t)
+		c.create("foo/", nil, "slash")
+
+		if got := valueOf(t, c.do(http.MethodGet, "/api/v1/cache/foo%2F", "", "")); got != `"slash"` {
+			t.Fatalf("got %s", got)
+		}
+	})
+
+	t.Run("it does not return the entry for the key without the slash", func(t *testing.T) {
+		c := newClient(t)
+		c.create("foo", nil, "plain")
+		c.create("foo/", nil, "slash")
+
+		if got := valueOf(t, c.do(http.MethodGet, "/api/v1/cache/foo%2F", "", "")); got != `"slash"` {
+			t.Fatalf("foo%%2F returned %s", got)
+		}
+		if got := valueOf(t, c.do(http.MethodGet, "/api/v1/cache/foo", "", "")); got != `"plain"` {
+			t.Fatalf("foo returned %s", got)
+		}
+	})
+
+	t.Run("a missing key with an encoded trailing slash is not found", func(t *testing.T) {
+		c := newClient(t)
+		c.create("foo", nil, "plain")
+
+		wantStatus(t, c.do(http.MethodGet, "/api/v1/cache/foo%2F", "", ""), http.StatusNotFound)
+	})
+
+	t.Run("a real trailing slash is still ignored", func(t *testing.T) {
+		c := newClient(t)
+		c.create("foo", nil, "plain")
+		c.create("foo/", nil, "slash")
+
+		if got := valueOf(t, c.do(http.MethodGet, "/api/v1/cache/foo/", "", "")); got != `"plain"` {
+			t.Fatalf("foo/ returned %s", got)
+		}
+		if got := valueOf(t, c.do(http.MethodGet, "/api/v1/cache/foo%2F/", "", "")); got != `"slash"` {
+			t.Fatalf("foo%%2F/ returned %s", got)
+		}
+	})
+
+	t.Run("the returned Location finds the entry", func(t *testing.T) {
+		c := newClient(t)
+		created := c.create("foo/", nil, "slash")
+		wantStatus(t, created, http.StatusCreated)
+
+		if got := valueOf(t, c.do(http.MethodGet, created.header.Get("Location"), "", "")); got != `"slash"` {
+			t.Fatalf("got %s", got)
+		}
+	})
 }
