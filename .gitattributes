@@ -1,0 +1,2 @@
+# gofmt requires LF, so keep it on every platform regardless of the local core.autocrlf setting.
+* text=auto eol=lf

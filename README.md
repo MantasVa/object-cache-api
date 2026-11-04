@@ -1,0 +1,177 @@
+# ObjectCacheApi
+
+A REST API cache store: each string **key** maps to a **list of arbitrary JSON values**, with a configurable
+time-to-live (TTL). It is written in Go using only the standard library.
+
+## Features
+
+- **Store any JSON.** Values can be strings, numbers, objects, arrays or `null`, and come back exactly as they were
+  sent, including numbers too large for a float.
+- **Flexible expiry.** Each entry has a TTL, which can be set per request or fall back to a configured default. A
+  configured maximum applies to every entry.
+- **Extendable TTLs.** Reading or appending can extend an entry's TTL. Extensions accumulate, up to the maximum.
+- **Self-cleanup.** A background job regularly removes expired entries, and expired entries are never returned.
+- **Survives restarts.** The cache is saved to disk regularly and on graceful shutdown, then restored at startup. Saves
+  are atomic, so a crash can't leave a partial file.
+- **Safe under concurrency.** Simultaneous requests can't lose each other's updates.
+- **Consistent errors.** All API errors use RFC 9457 problem details, and unexpected failures are logged in full but
+  never expose internal details to clients.
+- **Ready to operate.** It includes a health check, structured JSON logs, graceful shutdown, server timeouts, and
+  configuration through validated environment variables.
+- **Documented API.** Swagger UI and an OpenAPI document are built in.
+
+## Getting started
+
+Requires Go 1.25 or newer. Run these commands from this folder.
+
+```bash
+go run ./cmd/objectcacheapi   # then open http://localhost:8080 for Swagger UI
+go test ./...                 # run the tests
+```
+
+To run it in Docker:
+
+```bash
+docker build -t object-cache-api .
+docker run -p 8080:8080 object-cache-api
+```
+
+Try it out:
+
+```bash
+# Create an entry that lives for 60 seconds
+curl -i -X POST localhost:8080/api/v1/cache -H 'Content-Type: application/json' \
+  -d '{"key":"cart-42","values":[{"sku":"A1"}],"ttlSeconds":60}'
+
+# Read it, adding 120 seconds to its TTL
+curl 'localhost:8080/api/v1/cache/cart-42?extendTtl=true&ttlSeconds=120'
+
+# Append to it
+curl -X PATCH localhost:8080/api/v1/cache -H 'Content-Type: application/json' \
+  -d '{"key":"cart-42","values":[{"sku":"B2"}]}'
+
+# Delete it
+curl -X DELETE localhost:8080/api/v1/cache -H 'Content-Type: application/json' -d '{"key":"cart-42"}'
+```
+
+## API
+
+| Method | Route | Body | Behavior |
+|---|---|---|---|
+| `POST` | `/api/v1/cache` | `{key, values, ttlSeconds?}` | Creates an entry and returns `201`. `409` if the key exists and hasn't expired, `400` if the TTL exceeds the maximum. |
+| `GET` | `/api/v1/cache/{key}` | none | Returns a live entry, otherwise `404`. `?extendTtl=true&ttlSeconds=N` also extends its TTL. |
+| `PATCH` | `/api/v1/cache` | `{key, values, ttlSeconds?}` | Appends values and extends the TTL. Never creates an entry: `404` if missing or expired. |
+| `DELETE` | `/api/v1/cache` | `{key}` | Deletes an entry and returns `204`. `404` if it doesn't exist. |
+| `GET` | `/healthz` | none | Returns `200 {"status":"ok"}` while the process can serve requests. |
+
+A successful create, read or append returns the entry:
+
+```json
+{ "key": "cart-42", "values": [{ "sku": "A1" }], "expiresAtUtc": "2030-01-01T12:00:00Z" }
+```
+
+An error returns problem details with the `application/problem+json` content type:
+
+```json
+{
+  "type": "https://tools.ietf.org/html/rfc9110#section-15.5.5",
+  "title": "Key not found",
+  "status": 404,
+  "detail": "No entry found for key 'cart-42' or the key has expired."
+}
+```
+
+Requests have these limits:
+
+- Keys are 1 to 256 characters, measured in UTF-16 code units.
+- Each request carries 1 to 1000 values.
+- Bodies are at most 30 MB (`413` above that), must be JSON (`415` otherwise), and nest at most 32 levels.
+
+Swagger UI is at `/swagger`, and the OpenAPI document is at `/swagger/v1/swagger.json`. The page loads pinned Swagger UI
+assets from a CDN, so viewing it needs internet access in the browser.
+
+## Configuration
+
+Settings come from environment variables and are read once at startup. Invalid values stop the app from starting.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SERVER_ADDRESS` | `:8080` | Listen address. |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
+| `CACHE_DEFAULT_TTL_SECONDS` | `300` | Used when a request doesn't specify a TTL. Must be positive. |
+| `CACHE_MAX_TTL_SECONDS` | `3600` | Hard ceiling. Must be greater than the default. |
+| `CACHE_CLEANUP_INTERVAL_SECONDS` | `30` | How often expired entries are swept. Must be positive. |
+| `CACHE_PERSISTENCE_ENABLED` | `true` | Load a snapshot at startup, save periodically and on shutdown. |
+| `CACHE_PERSISTENCE_FILE_PATH` | `cache-snapshot.json` | Snapshot location, relative to the working directory. |
+| `CACHE_PERSISTENCE_SAVE_INTERVAL_SECONDS` | `10` | How often the snapshot is refreshed. Must be positive. |
+
+## Project structure
+
+```
+cmd/objectcacheapi/     Entry point: wires everything together, controls startup and shutdown order
+contract/               Wire format: request and response types, and their validation rules
+internal/
+  api/                  REST layer: routes, request decoding, status codes, errors, panic recovery, OpenAPI
+  cache/                Core domain: the immutable Entry and the concurrency-safe Store
+  background/           Recurring jobs: expired-entry cleanup and periodic snapshot saves
+  persistence/          Reads and atomically writes the snapshot file
+  config/               Loads and validates settings from the environment
+```
+
+Each package has one job, and dependencies point inward: `api`, `background` and `persistence` depend on `cache`, and
+`cache` depends on none of them. `contract` depends only on the standard library. Only
+`cmd/objectcacheapi/main.go` knows about every concrete type, so a component can be replaced by changing the wiring
+there.
+
+Packages declare small interfaces for just what they need. For example, `api.Store` lists the five store operations
+the REST layer uses, and `background.ExpiredRemover` has a single method. A different storage engine only has to
+implement the methods its consumer asks for.
+
+### How a request flows
+
+Taking `PATCH /api/v1/cache` as an example:
+
+1. `recoverPanics` wraps everything, so any panic below it becomes a logged, generic 500.
+2. `http.ServeMux` matches the method and path, and calls the handler.
+3. `decodeBody` checks the content type, size limit and JSON. Then `req.Validate()` checks the request's shape.
+4. The handler calls `store.Append` through the `api.Store` interface.
+5. The store updates the entry under its lock and returns the new entry or a sentinel error.
+6. The handler writes the entry as JSON. `writeStoreError` maps sentinel errors to status codes. It logs any error it
+   doesn't recognize and returns a generic 500, so internals never reach the client.
+
+### How the store stays correct
+
+Two rules work together:
+
+- **One `sync.RWMutex` guards the map.** Each operation holds it for its whole check-then-write sequence, so two
+  writers can't both read the same entry and overwrite each other. Reads share the lock.
+- **Entries are immutable.** Fields are unexported and there are no setters, and every change builds a new entry. The
+  store can hand out an `*Entry` that the caller reads after the lock is released, because nothing can change it.
+
+### Startup and shutdown
+
+At startup, the app validates its settings, restores the snapshot, starts the background jobs, and only then starts
+listening, so no request can see a partially loaded cache. A corrupt snapshot logs a warning and the cache starts empty.
+
+On `SIGINT` or `SIGTERM`, the server stops accepting connections and drains in-flight requests for up to 30 seconds.
+The background jobs stop only after that, so the final snapshot includes every accepted request.
+
+### How it's tested
+
+Tests use the standard `testing` package with small hand-written fakes:
+
+- `cache` and `background` run inside `testing/synctest` bubbles, where the clock is simulated, so TTL and interval
+  tests are deterministic and never wait for real time. Concurrency tests check that no update is lost.
+- `api` runs the real handler over HTTP, including failure cases that must not leak internal details. Other tests fail
+  if `openapi.json` stops matching the registered routes or the `contract` types.
+- `persistence` works against real temporary files.
+- `cmd/objectcacheapi` boots the whole application and checks that data survives a restart.
+
+## Not implemented
+
+- **Authentication.** Put this API behind a trusted network, or add authentication as middleware alongside
+  `recoverPanics`. OAuth2 client credentials is the recommended option.
+- **TLS.** The service speaks plain HTTP and expects a proxy or load balancer to terminate TLS.
+- **Per-value size limits.** Requests are bounded in total, but one value can use the whole 30 MB.
+- **Shared state across instances.** Each process has its own cache and snapshot.
+- **Live configuration reload.** Changing settings takes a restart.

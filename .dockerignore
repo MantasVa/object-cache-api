@@ -1,0 +1,7 @@
+.git
+*.exe
+cache-snapshot.json*
+Dockerfile
+README.md
+AGENTS.md
+CLAUDE.md
