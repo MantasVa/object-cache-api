@@ -1,0 +1,419 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "Key-based cache store for lists of arbitrary JSON values, with configurable TTL.",
+        "title": "Object Cache API",
+        "contact": {},
+        "version": "v1"
+    },
+    "paths": {
+        "/api/v1/cache": {
+            "post": {
+                "description": "Creates a new entry. Fails if the key already exists and hasn't expired.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json",
+                    "application/problem+json"
+                ],
+                "tags": [
+                    "cache"
+                ],
+                "summary": "Create an entry",
+                "parameters": [
+                    {
+                        "description": "Key, values and optional TTL",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/contract.CreateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Entry created",
+                        "schema": {
+                            "$ref": "#/definitions/contract.EntryResponse"
+                        },
+                        "headers": {
+                            "Location": {
+                                "type": "string",
+                                "description": "URL of the created entry"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Validation failed, or the TTL exceeds the configured maximum",
+                        "schema": {
+                            "$ref": "#/definitions/api.problem"
+                        }
+                    },
+                    "409": {
+                        "description": "An entry already exists for this key",
+                        "schema": {
+                            "$ref": "#/definitions/api.problem"
+                        }
+                    },
+                    "413": {
+                        "description": "Request body too large",
+                        "schema": {
+                            "$ref": "#/definitions/api.problem"
+                        }
+                    },
+                    "415": {
+                        "description": "Request body is not JSON",
+                        "schema": {
+                            "$ref": "#/definitions/api.problem"
+                        }
+                    },
+                    "500": {
+                        "description": "Unexpected server error",
+                        "schema": {
+                            "$ref": "#/definitions/api.problem"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "description": "Deletes an entry by key.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/problem+json"
+                ],
+                "tags": [
+                    "cache"
+                ],
+                "summary": "Delete an entry",
+                "parameters": [
+                    {
+                        "description": "Key of the entry to delete",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/contract.DeleteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Entry deleted"
+                    },
+                    "400": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/api.problem"
+                        }
+                    },
+                    "404": {
+                        "description": "No entry for this key",
+                        "schema": {
+                            "$ref": "#/definitions/api.problem"
+                        }
+                    },
+                    "413": {
+                        "description": "Request body too large",
+                        "schema": {
+                            "$ref": "#/definitions/api.problem"
+                        }
+                    },
+                    "415": {
+                        "description": "Request body is not JSON",
+                        "schema": {
+                            "$ref": "#/definitions/api.problem"
+                        }
+                    },
+                    "500": {
+                        "description": "Unexpected server error",
+                        "schema": {
+                            "$ref": "#/definitions/api.problem"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "description": "Appends values to an existing entry and extends its TTL. Never creates an entry.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json",
+                    "application/problem+json"
+                ],
+                "tags": [
+                    "cache"
+                ],
+                "summary": "Append to an entry",
+                "parameters": [
+                    {
+                        "description": "Key, values to append and optional TTL extension",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/contract.AppendRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Entry updated",
+                        "schema": {
+                            "$ref": "#/definitions/contract.EntryResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/api.problem"
+                        }
+                    },
+                    "404": {
+                        "description": "No entry for this key, or it has expired",
+                        "schema": {
+                            "$ref": "#/definitions/api.problem"
+                        }
+                    },
+                    "413": {
+                        "description": "Request body too large",
+                        "schema": {
+                            "$ref": "#/definitions/api.problem"
+                        }
+                    },
+                    "415": {
+                        "description": "Request body is not JSON",
+                        "schema": {
+                            "$ref": "#/definitions/api.problem"
+                        }
+                    },
+                    "500": {
+                        "description": "Unexpected server error",
+                        "schema": {
+                            "$ref": "#/definitions/api.problem"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/cache/{key}": {
+            "get": {
+                "description": "Returns an entry if it exists and hasn't expired. With extendTtl=true, it also adds to the entry's expiry, up to the configured maximum.",
+                "produces": [
+                    "application/json",
+                    "application/problem+json"
+                ],
+                "tags": [
+                    "cache"
+                ],
+                "summary": "Get an entry",
+                "parameters": [
+                    {
+                        "maxLength": 256,
+                        "minLength": 1,
+                        "type": "string",
+                        "description": "Cache key",
+                        "name": "key",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "When true, extends the entry's TTL as a side effect of the read",
+                        "name": "extendTtl",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 2147483647,
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "Seconds to extend by when extendTtl is true. Defaults to the configured default TTL",
+                        "name": "ttlSeconds",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Entry found",
+                        "schema": {
+                            "$ref": "#/definitions/contract.EntryResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/api.problem"
+                        }
+                    },
+                    "404": {
+                        "description": "No entry for this key, or it has expired",
+                        "schema": {
+                            "$ref": "#/definitions/api.problem"
+                        }
+                    },
+                    "500": {
+                        "description": "Unexpected server error",
+                        "schema": {
+                            "$ref": "#/definitions/api.problem"
+                        }
+                    }
+                }
+            }
+        },
+        "/healthz": {
+            "get": {
+                "description": "Reports whether the service can handle requests.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "health"
+                ],
+                "summary": "Check service health",
+                "responses": {
+                    "200": {
+                        "description": "The service is healthy",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "api.problem": {
+            "type": "object",
+            "properties": {
+                "detail": {
+                    "type": "string"
+                },
+                "errors": {
+                    "$ref": "#/definitions/contract.ValidationErrors"
+                },
+                "status": {
+                    "type": "integer"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "contract.AppendRequest": {
+            "type": "object",
+            "required": [
+                "key",
+                "values"
+            ],
+            "properties": {
+                "key": {
+                    "description": "Key of the existing entry to append to.",
+                    "type": "string",
+                    "maxLength": 256,
+                    "minLength": 1
+                },
+                "ttlSeconds": {
+                    "description": "Optional number of seconds to extend the TTL by. Falls back to the configured default.",
+                    "type": "integer",
+                    "maximum": 2147483647,
+                    "minimum": 1
+                },
+                "values": {
+                    "description": "Values to append to the existing entry. Each item can be any JSON value.",
+                    "type": "array",
+                    "maxItems": 1000,
+                    "minItems": 1,
+                    "items": {
+                        "type": "object"
+                    }
+                }
+            }
+        },
+        "contract.CreateRequest": {
+            "type": "object",
+            "required": [
+                "key",
+                "values"
+            ],
+            "properties": {
+                "key": {
+                    "description": "Key to store the values under. Must not already exist.",
+                    "type": "string",
+                    "maxLength": 256,
+                    "minLength": 1
+                },
+                "ttlSeconds": {
+                    "description": "Optional TTL in seconds. Falls back to the configured default, and may not exceed the configured max.",
+                    "type": "integer",
+                    "maximum": 2147483647,
+                    "minimum": 1
+                },
+                "values": {
+                    "description": "Values to store. Each item can be any JSON value, and comes back exactly as it was sent.",
+                    "type": "array",
+                    "maxItems": 1000,
+                    "minItems": 1,
+                    "items": {
+                        "type": "object"
+                    }
+                }
+            }
+        },
+        "contract.DeleteRequest": {
+            "type": "object",
+            "required": [
+                "key"
+            ],
+            "properties": {
+                "key": {
+                    "description": "Key of the entry to delete.",
+                    "type": "string",
+                    "maxLength": 256,
+                    "minLength": 1
+                }
+            }
+        },
+        "contract.EntryResponse": {
+            "type": "object",
+            "required": [
+                "expiresAtUtc",
+                "key",
+                "values"
+            ],
+            "properties": {
+                "expiresAtUtc": {
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "values": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                }
+            }
+        },
+        "contract.ValidationErrors": {
+            "type": "object",
+            "additionalProperties": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                }
+            }
+        }
+    }
+}

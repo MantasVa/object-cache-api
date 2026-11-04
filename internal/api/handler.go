@@ -36,7 +36,8 @@ type handlers struct {
 	logger *slog.Logger
 }
 
-// route is one documented endpoint. Every route listed here must appear in openapi.json, which a test enforces.
+// route is one documented endpoint. Every route listed here needs swag annotations on its handler, which a test
+// enforces by comparing this list with the generated document.
 type route struct {
 	method  string
 	path    string
@@ -68,10 +69,32 @@ func NewHandler(store Store, logger *slog.Logger) http.Handler {
 
 // healthz answers whether this process can serve requests. It depends on nothing external, because the cache
 // lives in memory, and the snapshot is restored before the server starts listening.
+//
+// @Summary Check service health
+// @Description Reports whether the service can handle requests.
+// @Tags health
+// @Produce json
+// @Success 200 {object} map[string]string "The service is healthy"
+// @Router /healthz [get]
 func healthz(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// get returns a live entry, and extends its TTL when the request asks for that.
+//
+// @Summary Get an entry
+// @Description Returns an entry if it exists and hasn't expired. With extendTtl=true, it also adds to the entry's expiry, up to the configured maximum.
+// @Tags cache
+// @Produce json
+// @Produce application/problem+json
+// @Param key path string true "Cache key" minlength(1) maxlength(256)
+// @Param extendTtl query bool false "When true, extends the entry's TTL as a side effect of the read"
+// @Param ttlSeconds query int false "Seconds to extend by when extendTtl is true. Defaults to the configured default TTL" minimum(1) maximum(2147483647)
+// @Success 200 {object} contract.EntryResponse "Entry found"
+// @Failure 400 {object} problem "Validation failed"
+// @Failure 404 {object} problem "No entry for this key, or it has expired"
+// @Failure 500 {object} problem "Unexpected server error"
+// @Router /api/v1/cache/{key} [get]
 func (h *handlers) get(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
 
@@ -101,6 +124,23 @@ func (h *handlers) get(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toResponse(entry))
 }
 
+// create adds a new entry.
+//
+// @Summary Create an entry
+// @Description Creates a new entry. Fails if the key already exists and hasn't expired.
+// @Tags cache
+// @Accept json
+// @Produce json
+// @Produce application/problem+json
+// @Param request body contract.CreateRequest true "Key, values and optional TTL"
+// @Success 201 {object} contract.EntryResponse "Entry created"
+// @Header 201 {string} Location "URL of the created entry"
+// @Failure 400 {object} problem "Validation failed, or the TTL exceeds the configured maximum"
+// @Failure 409 {object} problem "An entry already exists for this key"
+// @Failure 413 {object} problem "Request body too large"
+// @Failure 415 {object} problem "Request body is not JSON"
+// @Failure 500 {object} problem "Unexpected server error"
+// @Router /api/v1/cache [post]
 func (h *handlers) create(w http.ResponseWriter, r *http.Request) {
 	var req contract.CreateRequest
 	if !decodeBody(w, r, &req) {
@@ -121,6 +161,22 @@ func (h *handlers) create(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, toResponse(entry))
 }
 
+// append adds values to an existing entry and extends its TTL.
+//
+// @Summary Append to an entry
+// @Description Appends values to an existing entry and extends its TTL. Never creates an entry.
+// @Tags cache
+// @Accept json
+// @Produce json
+// @Produce application/problem+json
+// @Param request body contract.AppendRequest true "Key, values to append and optional TTL extension"
+// @Success 200 {object} contract.EntryResponse "Entry updated"
+// @Failure 400 {object} problem "Validation failed"
+// @Failure 404 {object} problem "No entry for this key, or it has expired"
+// @Failure 413 {object} problem "Request body too large"
+// @Failure 415 {object} problem "Request body is not JSON"
+// @Failure 500 {object} problem "Unexpected server error"
+// @Router /api/v1/cache [patch]
 func (h *handlers) append(w http.ResponseWriter, r *http.Request) {
 	var req contract.AppendRequest
 	if !decodeBody(w, r, &req) {
@@ -140,6 +196,21 @@ func (h *handlers) append(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toResponse(entry))
 }
 
+// delete removes an entry.
+//
+// @Summary Delete an entry
+// @Description Deletes an entry by key.
+// @Tags cache
+// @Accept json
+// @Produce application/problem+json
+// @Param request body contract.DeleteRequest true "Key of the entry to delete"
+// @Success 204 "Entry deleted"
+// @Failure 400 {object} problem "Validation failed"
+// @Failure 404 {object} problem "No entry for this key"
+// @Failure 413 {object} problem "Request body too large"
+// @Failure 415 {object} problem "Request body is not JSON"
+// @Failure 500 {object} problem "Unexpected server error"
+// @Router /api/v1/cache [delete]
 func (h *handlers) delete(w http.ResponseWriter, r *http.Request) {
 	var req contract.DeleteRequest
 	if !decodeBody(w, r, &req) {

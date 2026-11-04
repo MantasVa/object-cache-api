@@ -47,9 +47,12 @@ How to change this repository correctly. See `README.md` first for what the proj
   returns. The caller chooses the goroutine, and tests call `Run` directly inside a `testing/synctest` bubble.
 - **Configuration comes from environment variables** through `internal/config`, validated at startup. Don't read
   the environment anywhere else.
-- **`openapi.json` is written by hand.** Add documented endpoints to `handlers.routes()`, not directly to the mux.
-  Tests compare the document with `routes()` for methods and paths, and with the `contract` types for field names.
-  They don't check status codes, parameters or limits, so review those by hand.
+- **The Swagger document is generated.** Never edit `internal/api/docs/swagger.json` by hand. Annotate the handler and
+  run `go generate ./internal/api`, then commit the result. Add documented endpoints to `handlers.routes()`, not
+  directly to the mux. Tests compare the document with `routes()` for methods and paths, and with `contract` for field
+  names and limits. They don't check status codes or parameters, so review those by hand.
+- **swag stays a build-time tool.** It runs through `go:generate` with a pinned version. Don't import it or add it to
+  `go.mod`.
 
 ## Testing
 
@@ -70,5 +73,6 @@ How to change this repository correctly. See `README.md` first for what the proj
 
 ## Before finishing a change
 
-If you changed an endpoint, update `internal/api/openapi.json` and the API table in `README.md`. If you changed a
+If you changed an endpoint or a `contract` type, regenerate the Swagger document. If you changed an endpoint, also
+update the API table in `README.md`. If you changed a
 convention, update this file in the same change.

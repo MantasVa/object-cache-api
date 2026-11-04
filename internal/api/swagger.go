@@ -5,7 +5,13 @@ import (
 	"net/http"
 )
 
-//go:embed openapi.json
+// @title Object Cache API
+// @version v1
+// @description Key-based cache store for lists of arbitrary JSON values, with configurable TTL.
+
+//go:generate go run github.com/swaggo/swag/cmd/swag@v1.16.6 init --generalInfo swagger.go --dir .,../../contract --output docs --outputTypes json --parseInternal
+
+//go:embed docs/swagger.json
 var openAPIDocument []byte
 
 //go:embed swagger.html

@@ -694,23 +694,22 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
-// The OpenAPI document is written by hand, so these tests stop it drifting away from the code.
+// The document is generated from annotations, which the compiler can't check, and it's committed, so it can also be
+// out of date. These tests fail if it stops matching the code. To fix one, update the annotations and run go generate.
 
 type openAPI struct {
-	Paths      map[string]map[string]json.RawMessage `json:"paths"`
-	Components struct {
-		Schemas map[string]struct {
-			Required   []string                   `json:"required"`
-			Properties map[string]json.RawMessage `json:"properties"`
-		} `json:"schemas"`
-	} `json:"components"`
+	Paths       map[string]map[string]json.RawMessage `json:"paths"`
+	Definitions map[string]struct {
+		Required   []string                   `json:"required"`
+		Properties map[string]json.RawMessage `json:"properties"`
+	} `json:"definitions"`
 }
 
 func readOpenAPI(t *testing.T) openAPI {
 	t.Helper()
 	var doc openAPI
 	if err := json.Unmarshal(openAPIDocument, &doc); err != nil {
-		t.Fatalf("openapi.json is invalid: %v", err)
+		t.Fatalf("docs/swagger.json is invalid: %v", err)
 	}
 	return doc
 }
@@ -741,13 +740,13 @@ func TestOpenAPI_DocumentsExactlyTheRegisteredRoutes(t *testing.T) {
 }
 
 func TestOpenAPI_SchemasMatchTheContractTypes(t *testing.T) {
-	schemas := readOpenAPI(t).Components.Schemas
+	schemas := readOpenAPI(t).Definitions
 
 	for name, value := range map[string]any{
-		"CreateRequest": contract.CreateRequest{},
-		"AppendRequest": contract.AppendRequest{},
-		"DeleteRequest": contract.DeleteRequest{},
-		"EntryResponse": contract.EntryResponse{},
+		"contract.CreateRequest": contract.CreateRequest{},
+		"contract.AppendRequest": contract.AppendRequest{},
+		"contract.DeleteRequest": contract.DeleteRequest{},
+		"contract.EntryResponse": contract.EntryResponse{},
 	} {
 		typ := reflect.TypeOf(value)
 		fields := map[string]bool{}
@@ -775,6 +774,34 @@ func TestOpenAPI_SchemasMatchTheContractTypes(t *testing.T) {
 			if !fields[required] {
 				t.Errorf("%s: required property %q does not exist in the contract", name, required)
 			}
+		}
+	}
+}
+
+func TestOpenAPI_LimitsMatchTheContractConstants(t *testing.T) {
+	var doc struct {
+		Definitions map[string]struct {
+			Properties map[string]struct {
+				MinLength *int `json:"minLength"`
+				MaxLength *int `json:"maxLength"`
+				MinItems  *int `json:"minItems"`
+				MaxItems  *int `json:"maxItems"`
+			} `json:"properties"`
+		} `json:"definitions"`
+	}
+	if err := json.Unmarshal(openAPIDocument, &doc); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{"contract.CreateRequest", "contract.AppendRequest"} {
+		props := doc.Definitions[name].Properties
+
+		key, values := props["key"], props["values"]
+		if key.MinLength == nil || *key.MinLength != 1 || key.MaxLength == nil || *key.MaxLength != contract.MaxKeyLength {
+			t.Errorf("%s: key length limits are wrong: %+v", name, key)
+		}
+		if values.MinItems == nil || *values.MinItems != 1 || values.MaxItems == nil || *values.MaxItems != contract.MaxValuesPerRequest {
+			t.Errorf("%s: values count limits are wrong: %+v", name, values)
 		}
 	}
 }
